@@ -1,38 +1,63 @@
-import paddle
+# ------------------------------------------------------------------------
+# Obj2Seq: Formatting Objects as Sequences with Class Prompt for Visual Tasks
+# Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from Anchor DETR (https://github.com/megvii-research/AnchorDETR)
+# Copyright (c) 2021 megvii-model. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
+# Copyright (c) 2020 SenseTime. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from DETR (https://github.com/facebookresearch/detr)
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# ------------------------------------------------------------------------
 """
 Modules to compute the matching cost and solve the corresponding LSAP.
 """
+# import torch
 from scipy.optimize import linear_sum_assignment
+from paddle import nn
+
 import numpy as np
 from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
-KPS_OKS_SIGMAS = np.array([0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 
-    0.72, 0.62, 0.62, 1.07, 1.07, 0.87, 0.87, 0.89, 0.89]) / 10.0
 
 
-def joint_oks(src_joints, tgt_joints, tgt_bboxes, joint_sigmas=
-    KPS_OKS_SIGMAS, with_center=True, eps=1e-15):
-    tgt_flags = tgt_joints[:, :, (2)]
+KPS_OKS_SIGMAS = np.array([
+    .26, .25, .25, .35, .35, .79, .79, .72, .72, .62, .62, 1.07, 1.07,
+    .87, .87, .89, .89
+]) / 10.0
+
+
+def joint_oks(src_joints, tgt_joints, tgt_bboxes, joint_sigmas=KPS_OKS_SIGMAS, with_center=True, eps=1e-15):
+    tgt_flags = tgt_joints[:, :, 2]
     tgt_joints = tgt_joints[:, :, 0:2]
-    tgt_wh = tgt_bboxes[(...), 2:]
+    tgt_wh = tgt_bboxes[..., 2:]
     tgt_areas = tgt_wh[..., 0] * tgt_wh[..., 1]
     num_gts, num_kpts = tgt_joints.shape[0:2]
-    """Class Method: *.expand, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>    areas = tgt_areas.unsqueeze(axis=1).expand(num_gts, num_kpts)
->>>    sigmas = torch.tensor(joint_sigmas).astype(dtype=tgt_joints.dtype)
-    """Class Method: *.expand, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>    sigmas_sq = paddle.square(x=2 * sigmas).unsqueeze(axis=0).expand(num_gts,
-        num_kpts)
-    d_sq = paddle.square(x=src_joints.unsqueeze(axis=1) - tgt_joints.
-        unsqueeze(axis=0)).sum(axis=-1)
-    """Class Method: *.expand, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>    tgt_flags = tgt_flags.unsqueeze(axis=0).expand(*d_sq.shape)
-    oks = paddle.exp(x=-d_sq / (2 * areas * sigmas_sq + eps))
+
+    # if with_center:
+    #     assert src_joints.size(1) == tgt_joints.size(1) + 1
+    #     tgt_center = tgt_bboxes[..., 0:2]
+    #     sigma_center = joint_sigmas.mean()
+    #     tgt_joints = paddle.concat([tgt_joints, tgt_center[:, None, :]], axis=1)
+    #     joint_sigmas = np.append(joint_sigmas, np.array([sigma_center]), axis=0)
+    #     tgt_flags = paddle.concat([tgt_flags, torch.ones([num_gts, 1]).type_as(tgt_flags)], axis=1)
+    #     num_kpts = num_kpts + 1
+
+    areas = tgt_areas.unsqueeze(1).expand(num_gts, num_kpts)
+    sigmas = torch.tensor(joint_sigmas).type_as(tgt_joints)
+    sigmas_sq = torch.square(2 * sigmas).unsqueeze(0).expand(num_gts, num_kpts)
+    d_sq = torch.square(src_joints.unsqueeze(1) - tgt_joints.unsqueeze(0)).sum(-1)
+    tgt_flags = tgt_flags.unsqueeze(0).expand(*d_sq.shape)
+
+    oks = torch.exp(-d_sq / (2 * areas * sigmas_sq + eps))
     oks = oks * tgt_flags
-    oks = oks.sum(axis=-1) / (tgt_flags.sum(axis=-1) + eps)
+    oks = oks.sum(-1) / (tgt_flags.sum(-1) + eps)
+
     return oks
 
 
-class HungarianMatcher(paddle.nn.Layer):
+class HungarianMatcher(nn.Layer):
     """This class computes an assignment between the targets and the predictions of the network
 
     For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -54,33 +79,37 @@ class HungarianMatcher(paddle.nn.Layer):
         self.cost_bbox = args.set_cost_bbox
         self.cost_giou = args.set_cost_giou
         self.cost_kps_oks = args.set_cost_keypoints_oks
-        self.cost_kps_l1 = args.set_cost_keypoints_l1
+        self.cost_kps_l1  = args.set_cost_keypoints_l1
         self.class_normalization = args.set_class_normalization
         self.box_normalization = args.set_box_normalization
         self.keypoint_normalization = args.set_keypoint_normalization
         self.keypoint_reference = args.set_keypoint_reference
-        assert self.keypoint_reference in ['absolute', 'relative']
+        assert self.keypoint_reference in ["absolute", "relative"]
+
         self.with_boxes = self.cost_giou > 0 or self.cost_bbox > 0
         self.with_keypoints = self.cost_kps_oks > 0 or self.cost_kps_l1 > 0
-        assert self.cost_class != 0 and (self.with_boxes or self.with_keypoints
-            ), 'all costs cant be 0'
-        self.record_history = {'class': [], 'bbox': [], 'giou': [],
-            'kps_l1': [], 'kps_oks': []}
+        assert self.cost_class != 0 and (self.with_boxes or self.with_keypoints), "all costs cant be 0"
+
+        self.record_history = {
+            "class": [],
+            "bbox": [],
+            "giou": [],
+            "kps_l1": [],
+            "kps_oks": [],
+        }
         self.record_count = 0
 
     def printMatcher(self):
         self.record_count += 1
         for k in self.record_history:
             self.record_history[k] = self.record_history[k][-10:]
-        if self.record_count >= 10:
+        if self.record_count >=10:
             self.record_count = 0
             to_print_dict = {}
             for k in self.record_history:
                 if len(self.record_history[k]) > 0:
-                    to_print_dict[k] = sum(self.record_history[k]) / len(self
-                        .record_history[k])
-            print(' '.join([f'{k}: {v.item()}' for k, v in to_print_dict.
-                items()]))
+                    to_print_dict[k] = sum(self.record_history[k]) / len(self.record_history[k])
+            print(" ".join([f"{k}: {v.item()}" for k, v in to_print_dict.items()]))
 
     def forward(self, outputs, targets, num_box, num_pts, save_print=False):
         """ Performs the matching
@@ -104,106 +133,106 @@ class HungarianMatcher(paddle.nn.Layer):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
-        with paddle.no_grad():
-            bs, num_queries = outputs['pred_logits'].shape[:2]
-            NORMALIZER = {'num_box': num_box, 'num_pts': num_pts, 'mean':
-                num_queries, 'none': 1, 'box_average': num_box}
-            out_logit = outputs['pred_logits'].flatten(start_axis=0,
-                stop_axis=1)
+        with torch.no_grad():
+            bs, num_queries = outputs["pred_logits"].shape[:2]
+            # how to normalize loss for both class, box and keypoint
+            NORMALIZER = {"num_box": num_box, "num_pts": num_pts, "mean": num_queries, "none": 1, "box_average": num_box}
+
+            # We flatten to compute the cost matrices in a batch
+            out_logit = outputs["pred_logits"].flatten(0, 1) # [batch_size * num_queries]
             out_prob = out_logit.sigmoid()
             if self.with_boxes:
-                out_bbox = outputs['pred_boxes'].flatten(start_axis=0,
-                    stop_axis=1)
+                out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
             if self.with_keypoints:
-                out_keypoints = outputs['pred_keypoints'].flatten(start_axis
-                    =0, stop_axis=1)
-            tgt_bbox = paddle.concat(x=[v['boxes'] for v in targets])
-            sizes = [t['keypoints'].shape[0] for t in targets]
+                out_keypoints = outputs["pred_keypoints"].flatten(0, 1)
+
+            # Also concat the target labels and boxes
+            # tgt_ids = paddle.concat([v["labels"] for v in targets])
+            tgt_bbox = paddle.concat([v["boxes"] for v in targets])
+            sizes = [t["keypoints"].shape[0] for t in targets]
             num_local = sum(sizes)
+
             if num_local == 0:
-                return [(paddle.to_tensor(data=[]).astype('int64'), paddle.
-                    to_tensor(data=[]).astype('int64')) for _ in sizes]
-            if self.class_type == 'probs':
-                cost_class = -out_prob
-            elif self.class_type == 'logits':
-                cost_class = -out_logit
-            elif self.class_type == 'bce':
-                pos_cost_class = -out_prob.log()
-                neg_cost_class = -(1 - out_prob).log()
-                cost_class = pos_cost_class - neg_cost_class
-            elif self.class_type == 'focal':
+                return [(paddle.to_tensor([], dtype=torch.int64), paddle.to_tensor([], dtype=torch.int64)) for _ in sizes]
+
+            # Compute the classification cost.
+            if self.class_type == "probs":
+                cost_class = - out_prob
+            elif self.class_type == "logits":
+                cost_class = - out_logit
+            elif self.class_type == "bce":
+                pos_cost_class = - (out_prob).log()
+                neg_cost_class = - (1 - out_prob).log()
+                cost_class = pos_cost_class - neg_cost_class # [batch_size * num_queries]
+            elif self.class_type == "focal":
                 alpha = 0.25
                 gamma = 2.0
-                neg_cost_class = (1 - alpha) * out_prob ** gamma * -(1 -
-                    out_prob + 1e-08).log()
-                pos_cost_class = alpha * (1 - out_prob) ** gamma * -(out_prob +
-                    1e-08).log()
-                cost_class = pos_cost_class - neg_cost_class
-            cost_class = cost_class[..., None].tile(repeat_times=[1, num_local]
-                )
-            C = self.cost_class * cost_class / NORMALIZER[self.
-                class_normalization]
+                neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
+                pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
+                cost_class = pos_cost_class - neg_cost_class # [batch_size * num_queries]
+            cost_class = cost_class[..., None].tile(1, num_local)
+            # 根据需求进行归一化
+            # 以分类损失作为起点
+            C = self.cost_class * cost_class / NORMALIZER[self.class_normalization]
             if save_print:
-                self.record_history['class'].append(C.max() - C.logsumexp())
+                self.record_history["class"].append(C.max() - C.min())
+
             if self.with_boxes:
->>>                cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1) / NORMALIZER[
-                    self.box_normalization]
-                cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(
-                    out_bbox), box_cxcywh_to_xyxy(tgt_bbox)) / NORMALIZER[
-                    self.box_normalization]
+                # Compute the L1 cost between boxes
+                cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1) / NORMALIZER[self.box_normalization]
+
+                # Compute the giou cost betwen boxes
+                cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox),
+                                                box_cxcywh_to_xyxy(tgt_bbox)) / NORMALIZER[self.box_normalization]
+                # Final cost matrix
                 C_box = self.cost_bbox * cost_bbox + self.cost_giou * cost_giou
                 if save_print:
                     C_bbox = self.cost_bbox * cost_bbox
                     C_giou = self.cost_giou * cost_giou
-                    self.record_history['bbox'].append(C_bbox.max() -
-                        C_bbox.logsumexp())
-                    self.record_history['giou'].append(C_giou.max() -
-                        C_giou.logsumexp())
+                    self.record_history["bbox"].append(C_bbox.max() - C_bbox.min())
+                    self.record_history["giou"].append(C_giou.max() - C_giou.min())
                 C = C + C_box
+
             if self.with_keypoints:
-                tgt_kps = paddle.concat(x=[v['keypoints'] for v in targets])
-                tgt_visible = tgt_kps[..., -1]
-                tgt_kps = tgt_kps[(...), :2]
-                tgt_visible = (tgt_visible > 0) * (tgt_kps >= 0).all(axis=-1
-                    ) * (tgt_kps <= 1).all(axis=-1)
-                if self.cost_kps_l1 > 0.0:
-                    out_kps = out_keypoints.unsqueeze(axis=1)
-                    tgt_kps_t = tgt_kps.unsqueeze(axis=0)
-                    if self.keypoint_reference == 'relative':
-                        bbox_wh = tgt_bbox[(None), :, (None), 2:]
-                        out_kps, tgt_kps_t = (out_kps / bbox_wh, tgt_kps_t /
-                            bbox_wh)
-                    cost_kps_l1 = paddle.abs(x=out_kps - tgt_kps_t).sum(axis=-1
-                        ) * tgt_visible
-                    cost_kps_l1 = cost_kps_l1.sum(axis=-1)
-                    if self.keypoint_normalization == 'box_average':
-                        cost_kps_l1 = cost_kps_l1 / tgt_visible.sum(axis=-1
-                            ).clip(min=1.0)
-                    C_kps_l1 = self.cost_kps_l1 * cost_kps_l1 / NORMALIZER[
-                        self.keypoint_normalization]
+                tgt_kps = paddle.concat([v["keypoints"] for v in targets])# tgt, 17, 3
+                tgt_visible = tgt_kps[..., -1] # tgt, 17
+                tgt_kps = tgt_kps[..., :2] # tgt, 17, 2
+                tgt_visible = (tgt_visible > 0) * (tgt_kps >= 0).all(axis=-1) * (tgt_kps <= 1).all(axis=-1) # # tgt, 17
+                if self.cost_kps_l1 > 0.:
+                    out_kps = out_keypoints.unsqueeze(1) # bs*nobj, 1, 17, 2
+                    tgt_kps_t = tgt_kps.unsqueeze(0) # 1, tgt, 17, 2
+
+                    if self.keypoint_reference == "relative":
+                        bbox_wh = tgt_bbox[None, :, None, 2:] # bs*nobj, tgt, 1, 2
+                        out_kps, tgt_kps_t = out_kps / bbox_wh, tgt_kps_t / bbox_wh
+
+                    cost_kps_l1 = torch.abs(out_kps - tgt_kps_t).sum(-1) * tgt_visible # # bs*nobj, tgt, 17
+                    # cost_kps_l1 = torch.cdist(out_kps, tgt_kps_t, p=1).permute(1, 2, 0) * tgt_visible # bs*nobj, tgt, 17
+                    cost_kps_l1 = cost_kps_l1.sum(-1)
+                    if self.keypoint_normalization == "box_average":
+                        cost_kps_l1 = cost_kps_l1 / tgt_visible.sum(-1).clip(min=1.)
+                    C_kps_l1 = self.cost_kps_l1 * cost_kps_l1 / NORMALIZER[self.keypoint_normalization]
                     C = C + C_kps_l1
+
                     if save_print:
-                        self.record_history['kps_l1'].append(C_kps_l1.max() -
-                            C_kps_l1.logsumexp())
-                if self.cost_kps_oks > 0.0:
-                    cat_tgt_kps = paddle.concat(x=[tgt_kps, tgt_visible.
-                        unsqueeze(axis=-1)], axis=-1)
+                        self.record_history["kps_l1"].append(C_kps_l1.max() - C_kps_l1.min())
+
+                if self.cost_kps_oks > 0.:
+                    # Compute the relative oks cost between joints
+                    cat_tgt_kps = paddle.concat([tgt_kps, tgt_visible.unsqueeze(-1)], axis=-1)
                     cost_oks = -joint_oks(out_keypoints, cat_tgt_kps, tgt_bbox)
-                    C_kps_oks = self.cost_kps_oks * cost_oks / NORMALIZER[
-                        self.box_normalization]
+                    C_kps_oks = self.cost_kps_oks * cost_oks / NORMALIZER[self.box_normalization]
                     C = C + C_kps_oks
+
                     if save_print:
-                        self.record_history['kps_oks'].append(C_kps_oks.max
-                            () - C_kps_oks.logsumexp())
-            """Class Method: *.view, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>            C = C.view(bs, num_queries, -1).cpu()
+                        self.record_history["kps_oks"].append(C_kps_oks.max() - C_kps_oks.min())
+
+            C = C.reshape(bs, num_queries, -1).cpu()
             if save_print:
                 self.printMatcher()
-            """Class Method: *.split, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>            indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.
-                split(sizes, -1))]
-            return [(paddle.to_tensor(data=i).astype('int64'), paddle.
-                to_tensor(data=j).astype('int64')) for i, j in indices]
+
+            indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+            return [(paddle.to_tensor(i, dtype=torch.int64), paddle.to_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 
 def build_matcher(args):
