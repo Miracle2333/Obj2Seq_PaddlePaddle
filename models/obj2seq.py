@@ -1,13 +1,32 @@
-import paddle
+# ------------------------------------------------------------------------
+# Obj2Seq: Formatting Objects as Sequences with Class Prompt for Visual Tasks
+# Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from Anchor DETR (https://github.com/megvii-research/AnchorDETR)
+# Copyright (c) 2021 megvii-model. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
+# Copyright (c) 2020 SenseTime. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from DETR (https://github.com/facebookresearch/detr)
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# ------------------------------------------------------------------------
 """
 Main framework for Obj2Seq
 """
-from util.misc import NestedTensor, nested_tensor_from_tensor_list, accuracy, get_world_size, interpolate, is_dist_avail_and_initialized, inverse_sigmoid
+import paddle
+import paddle.nn.functional as F
+from paddle import nn
+
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+                       accuracy, get_world_size, interpolate,
+                       is_dist_avail_and_initialized, inverse_sigmoid)
+
 from .backbone import build_backbone
 from .transformer import build_transformer
+from .initializer import xavier_uniform_, constant_
 
-
-class Obj2Seq(paddle.nn.Layer):
+class Obj2Seq(nn.Layer):
     """ This is Obj2Seq, our main framework """
 
     def __init__(self, args):
@@ -15,38 +34,42 @@ class Obj2Seq(paddle.nn.Layer):
         Parameters:
             args: refers _C.MODEL in config.yaml.
         """
-        super().__init__()
+        super(Obj2Seq, self).__init__()
         self.backbone = build_backbone(args.BACKBONE)
         self.transformer = build_transformer(args)
-        num_feature_levels = args.BACKBONE.num_feature_levels
+        num_feature_levels=args.BACKBONE.num_feature_levels
         hidden_dim = self.transformer.d_model
+
         self.num_feature_levels = num_feature_levels
         if num_feature_levels > 1:
             num_backbone_outs = len(self.backbone.strides)
             input_proj_list = []
             for _ in range(num_backbone_outs):
                 in_channels = self.backbone.num_channels[_]
-                input_proj_list.append(paddle.nn.Sequential(paddle.nn.
-                    Conv2D(in_channels=in_channels, out_channels=hidden_dim,
->>>                    kernel_size=1), torch.nn.GroupNorm(32, hidden_dim)))
+                input_proj_list.append(nn.Sequential(
+                    nn.Conv2D(in_channels, hidden_dim, kernel_size=1),
+                    nn.GroupNorm(32, hidden_dim),
+                ))
             for _ in range(num_feature_levels - num_backbone_outs):
-                input_proj_list.append(paddle.nn.Sequential(paddle.nn.
-                    Conv2D(in_channels=in_channels, out_channels=hidden_dim,
->>>                    kernel_size=3, stride=2, padding=1), torch.nn.GroupNorm
-                    (32, hidden_dim)))
+                input_proj_list.append(nn.Sequential(
+                    nn.Conv2D(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
+                    nn.GroupNorm(32, hidden_dim),
+                ))
                 in_channels = hidden_dim
-            self.input_proj = paddle.nn.LayerList(sublayers=input_proj_list)
+            self.input_proj = nn.LayerList(input_proj_list)
         else:
-            self.input_proj = paddle.nn.LayerList(sublayers=[paddle.nn.
-                Sequential(paddle.nn.Conv2D(in_channels=self.backbone.
-                num_channels[0], out_channels=hidden_dim, kernel_size=1),
->>>                torch.nn.GroupNorm(32, hidden_dim))])
+            self.input_proj = nn.LayerList([
+                nn.Sequential(
+                    nn.Conv2D(self.backbone.num_channels[0], hidden_dim, kernel_size=1),
+                    nn.GroupNorm(32, hidden_dim),
+                )])
+
         for proj in self.input_proj:
->>>            torch.nn.init.xavier_uniform_(proj[0].weight, gain=1)
->>>            torch.nn.init.constant_(proj[0].bias, 0)
+            xavier_uniform_(proj[0].weight, gain=1)
+            constant_(proj[0].bias, 0)
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -63,6 +86,7 @@ class Obj2Seq(paddle.nn.Layer):
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
         features = self.backbone(samples)
+
         srcs = []
         masks = []
         for l, feat in enumerate(features):
@@ -78,26 +102,24 @@ class Obj2Seq(paddle.nn.Layer):
                 else:
                     src = self.input_proj[l](srcs[-1])
                 m = samples.mask
-                """Class Method: *.float, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
-                """Class Method: *.to, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>                mask = torch.nn.functional.interpolate(m[None].float(),
-                    size=src.shape[-2:]).to('bool')[0]
+                mask = F.interpolate(m[None].cast("float32"), size=src.shape[-2:])[0]
                 srcs.append(src)
                 masks.append(mask)
+
         outputs, loss_dict = self.transformer(srcs, masks, targets=targets)
         return outputs, loss_dict
 
 
 def build_model(args):
     model = Obj2Seq(args.MODEL)
+
+    # load-pretrained
     if args.MODEL.pretrained:
->>>        pretrained_dict = torch.load(args.MODEL.pretrained, map_location='cpu')
-        if 'model' in pretrained_dict:
-            pretrained_dict = pretrained_dict['model']
-        missing_keys, unexpected_keys = model.set_state_dict(state_dict=
-            pretrained_dict, strict=False)
-        unexpected_keys = [k for k in unexpected_keys if not (k.endswith(
-            'total_params') or k.endswith('total_ops'))]
+        pretrained_dict = torch.load(args.MODEL.pretrained, map_location="cpu")
+        if "model" in pretrained_dict:
+            pretrained_dict = pretrained_dict["model"]
+        missing_keys, unexpected_keys = model.load_state_dict(pretrained_dict, strict=False)
+        unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
             print('Pretrain Model Missing Keys: {}'.format(missing_keys))
         if len(unexpected_keys) > 0:
@@ -110,9 +132,10 @@ def build_model(args):
                 out = True
                 break
         return out
+
     if len(args.MODEL.fixed_params) > 0:
         for n, p in model.named_parameters():
             if match_name_keywords(n, args.MODEL.fixed_params):
-                """Class Method: *.requires_grad_, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>                p.requires_grad_(False)
+                # p.requires_grad_(False)
+                p.stop_gradient = True
     return model

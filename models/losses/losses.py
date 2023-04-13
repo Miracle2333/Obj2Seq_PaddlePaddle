@@ -1,8 +1,18 @@
+# ------------------------------------------------------------------------
+# Obj2Seq: Formatting Objects as Sequences with Class Prompt for Visual Tasks
+# Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
+# Copyright (c) 2020 SenseTime. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from DETR (https://github.com/facebookresearch/detr)
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# ------------------------------------------------------------------------
 import paddle
+import paddle.nn as nn
+import paddle.nn.functional as F
 
-
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float=0.25, gamma:
-    float=2):
+def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -18,13 +28,13 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float=0.25, gamma:
     Returns:
         Loss tensor
     """
-    prob = inputs.sigmoid()
->>>    ce_loss = torch.nn.functional.binary_cross_entropy_with_logits(inputs,
-        targets, reduction='none')
+    prob = F.sigmoid(inputs)
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     p_t = prob * targets + (1 - prob) * (1 - targets)
-    loss = ce_loss * (1 - p_t) ** gamma
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
     if alpha >= 0:
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
-    return loss.mean(axis=1).sum(
-        ) / num_boxes if num_boxes is not None else loss.sum()
+
+    return loss.mean(1).sum() / num_boxes if num_boxes is not None else loss.sum()

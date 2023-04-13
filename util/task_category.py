@@ -1,17 +1,28 @@
-import paddle
+# ------------------------------------------------------------------------
+# Obj2Seq: Formatting Objects as Sequences with Class Prompt for Visual Tasks
+# Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
+# ------------------------------------------------------------------------
+
 import json
+import paddle
 from argparse import Namespace
 
 
-class TaskCategory:
-
+class TaskCategory():
     def __init__(self, task_file, num_classes):
         task_content = json.load(open(task_file))
-        self.tasks = [Namespace(index=idx, name=it['name'], num_steps=it[
-            'num_steps'], required_outputs=it['required_outputs'],
-            required_targets=it['required_targets'], losses=it['losses']) for
-            idx, it in enumerate(task_content)]
-        self.name2task = {t.name: t for t in self.tasks}
+        self.tasks = [Namespace(
+            index=idx,
+            name=it['name'],
+            num_steps=it['num_steps'],
+            required_outputs=it['required_outputs'],
+            required_targets=it['required_targets'],
+            losses=it['losses'],
+        ) for idx, it in enumerate(task_content)]
+        self.name2task = {
+            t.name: t for t in self.tasks
+        }
+
         num_cats = [it['num_cats'] for it in task_content]
         currentIndex = 0
         all_cats = num_cats[0]
@@ -21,7 +32,7 @@ class TaskCategory:
                 currentIndex += 1
                 all_cats += num_cats[currentIndex]
             self.id_to_index.append(currentIndex)
->>>        self.id_to_index = torch.LongTensor(self.id_to_index)
+        self.id_to_index = paddle.to_tensor(self.id_to_index, dtype=paddle.int32)
 
     def __getitem__(self, tId):
         if isinstance(tId, int):
@@ -36,25 +47,23 @@ class TaskCategory:
         Args:
             cls_idx: Tensor(bs, cs)
         """
-        taskIndexes = self.id_to_index[cls_idx]
+        taskIndexes = self.id_to_index[cls_idx] # cs_all
         tasks = {}
-        """Class Method: *.unique, not convert, please check whether it is torch.Tensor.*/Optimizer.*/nn.Module.*, and convert manually"""
->>>        for taskIdx in taskIndexes.unique():
-            tasks[taskIdx.item()] = {'indexes': taskIndexes == taskIdx,
-                'cls_idx': cls_idx[taskIndexes == taskIdx], 'bs_idx':
-                bs_idx[taskIndexes == taskIdx]}
+        for taskIdx in taskIndexes.unique():
+            tasks[taskIdx.item()] = {
+                "indexes": (taskIndexes == taskIdx),
+                "cls_idx": cls_idx[taskIndexes == taskIdx],
+                "bs_idx": bs_idx[taskIndexes == taskIdx],
+            }
         return tasks
 
     def arrangeBySteps(self, cls_idx, *args):
         tIds = [self.id_to_index[ic] for ic in cls_idx]
-        nSteps = paddle.to_tensor(data=[self.tasks[tId].num_steps for tId in
-            tIds])
-        nSteps, indices = nSteps.sort(descending=True)
-        return nSteps, cls_idx[indices], *[(a[indices] if a is not None else
-            None) for a in args]
+        nSteps = paddle.to_tensor([self.tasks[tId].num_steps for tId in tIds])
+        nSteps, indices = nSteps.sort(descending=True), nSteps.argsort(descending=True)
+        return (nSteps, cls_idx[indices], *[a[indices] if a is not None else None for a in args])
 
     def getNumSteps(self, cls_idx, *args):
         tIds = [self.id_to_index[ic] for ic in cls_idx]
-        nSteps = paddle.to_tensor(data=[self.tasks[tId].num_steps for tId in
-            tIds])
+        nSteps = paddle.to_tensor([self.tasks[tId].num_steps for tId in tIds])
         return nSteps

@@ -1,8 +1,9 @@
-CONFIG_FILE=$1
-OUTPUT_DIR=$2
+CONFIG_FILE='configs/detection_r50_seqhead_plus_box_refine.yaml'
+OUTPUT_DIR='output_debug/'
 NGPUS=8
-PORT=34221
+PORT=34222
 
-python -m torch.distributed.launch --nproc_per_node=$NGPUS --master_port $PORT --use_env main.py \
- --cfg $CONFIG_FILE --output_dir $OUTPUT_DIR --auto_resume ${@:3} | tee $OUTPUT_DIR/screen.log
-
+#nohup 
+python3.7 -m paddle.distributed.launch --gpus 0,1,2,3 main.py \
+ --cfg $CONFIG_FILE --output_dir $OUTPUT_DIR 
+ #1>logs/10.log 2>logs/10.err &
