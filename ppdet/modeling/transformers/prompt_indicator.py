@@ -8,9 +8,9 @@ import paddle.nn.functional as F
 import numpy as np
 
 from .utils import _get_clones
-from .obj_transformer import MultiHeadDecoderLayer
-from .predictors.classifiers import build_label_classifier
-from .losses.class_criterion import ClassDecoderCriterion
+from .attention_layers import MultiHeadDecoderLayer
+from .classifiers import build_label_classifier
+from .class_criterion import ClassDecoderCriterion
 
 
 class RetentionPolicy(nn.Layer):
@@ -68,7 +68,7 @@ class PromptIndicator(nn.Layer):
         self.num_blocks = args.num_blocks
         self.level_preserve = args.level_preserve # only work for DeformableDETR
 
-        prompt_block = MultiHeadDecoderLayer(args.BLOCK)
+        prompt_block = MultiHeadDecoderLayer(args.BLOCK.hidden_dim, args.BLOCK.nheads, dropout=args.BLOCK.dropout)
 
         self.prompt_blocks = _get_clones(prompt_block, self.num_blocks)
 
@@ -147,8 +147,11 @@ class PromptIndicator(nn.Layer):
 
         output_label_logits = []
         output_feats = []
+        
+        
+        #issue uncertain
         for lid, layer in enumerate(self.prompt_blocks):
-            tgt_class = layer(tgt_class, None, None, srcs=srcs, src_padding_masks=mask, **kwargs) # bs, 91, c
+            tgt_class = layer(tgt_class, srcs, mask) # bs, 91, c
             label_logits = self.classifier_label[lid](tgt_class, class_vector=origin_class_vector)
             label_logits = label_logits.reshape([bs, -1])
             output_label_logits.append(label_logits)
@@ -157,8 +160,8 @@ class PromptIndicator(nn.Layer):
         # organize outputs
         outputs = {
             'tgt_class': tgt_class,               # bs, k, d
-            # 'cls_label_logits': label_logits,     # bs, k
-            'cls_label_logits': output_label_logits[-2], # TODO!TODO!TODO!
+             'cls_label_logits': label_logits,     # bs, k
+            #'cls_label_logits': output_label_logits[-2], # TODO!TODO!TODO!
             'cls_output_feats': tgt_class, # bs, k, d
         }
 

@@ -20,7 +20,7 @@ from scipy.optimize import linear_sum_assignment
 from paddle import nn
 
 import numpy as np
-from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+from ..utils import box_cxcywh_to_xyxy, generalized_box_iou
 
 
 KPS_OKS_SIGMAS = np.array([

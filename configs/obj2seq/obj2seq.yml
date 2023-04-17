@@ -9,7 +9,7 @@ DATA:
 MODEL:
   PROMPT_INDICATOR:
     CLASS_PROMPTS:
-      init_vectors: word_arrays/coco_clip_v2.npy
+      init_vectors: configs/obj2seq/word_arrays/coco_clip_v2.npy
   OBJECT_DECODER:
     refine_reference_points: True
     HEAD:

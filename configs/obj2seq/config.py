@@ -287,7 +287,7 @@ def get_config(args, cfg):
     #args.MODEL = config.MODEL
     #args.TRAIN = config.TRAIN
     #args.EVAL = config.EVAL
-    cfg.OBJ2SEQ['model'] = config
+    cfg.Obj_Transformer['model'] = config
 
     return cfg
 

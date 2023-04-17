@@ -19,6 +19,7 @@ try:
     from collections.abc import Sequence
 except Exception:
     from collections import Sequence
+import paddle
 from paddle.io import Dataset
 from ppdet.core.workspace import register, serializable
 from ppdet.utils.download import get_dataset_path

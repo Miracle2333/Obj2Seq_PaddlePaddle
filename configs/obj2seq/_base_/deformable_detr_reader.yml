@@ -13,9 +13,11 @@ TrainReader:
   - NormalizeBox: {}
   - BboxXYXY2XYWH: {}
   - Permute: {}
+ # - GenerateClassificationResults: {num_cats: 80}
+  #- RearrangeByCls: {}
   batch_transforms:
   - PadMaskBatch: {pad_to_stride: -1, return_pad_mask: true}
-  batch_size: 2
+  batch_size: 1
   shuffle: true
   drop_last: true
   collate_batch: false

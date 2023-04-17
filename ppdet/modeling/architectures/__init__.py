@@ -76,3 +76,4 @@ from .pose3d_metro import *
 from .centertrack import *
 from .queryinst import *
 from .keypoint_petr import *
+from .obj2seq import *

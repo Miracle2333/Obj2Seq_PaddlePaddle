@@ -33,6 +33,47 @@ from .utils import _get_clones, get_valid_ratio
 from ..initializer import linear_init_, constant_, xavier_uniform_, normal_
 
 
+def _get_activation_fn(activation):
+    """Return an activation function given a string"""
+    if activation == "relu":
+        return F.relu
+    if activation == "gelu":
+        return F.gelu
+    if activation == "glu":
+        return F.glu
+    if activation == "prelu":
+        return nn.PReLU()
+    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
+
+
+class FFN(nn.Layer):
+    def __init__(self, d_model=256, d_ffn=1024, dropout=0., activation='relu',\
+         weight_attr=None, bias_attr=None, normalize_before=False):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, d_ffn)
+        self.activation = getattr(F, activation)
+        self.dropout2 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(d_ffn, d_model)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model, weight_attr=weight_attr, bias_attr=bias_attr)
+        self.normalize_before = normalize_before
+        self._reset_parameters()
+    
+    def _reset_parameters(self):
+        linear_init_(self.linear1)
+        linear_init_(self.linear2)
+        xavier_uniform_(self.linear1.weight)
+        xavier_uniform_(self.linear2.weight)
+
+    def forward(self, src):
+        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
+
+
+
+
 class MSDeformableAttention(nn.Layer):
     def __init__(self,
                  embed_dim=256,
@@ -51,6 +92,7 @@ class MSDeformableAttention(nn.Layer):
         self.total_points = num_heads * num_levels * num_points
 
         self.head_dim = embed_dim // num_heads
+        self.value = None
         assert self.head_dim * num_heads == self.embed_dim, "embed_dim must be divisible by num_heads"
 
         self.sampling_offsets = nn.Linear(
@@ -96,6 +138,21 @@ class MSDeformableAttention(nn.Layer):
         xavier_uniform_(self.output_proj.weight)
         constant_(self.output_proj.bias)
 
+    def preprocess_value(self, input_flatten, input_padding_mask=None, cs_batch=None, bs_idx=None):
+        N, Len_in, _ = input_flatten.shape
+        value = self.value_proj(input_flatten)
+        if input_padding_mask is not None:
+            #value = value.masked_fill(input_padding_mask[..., None], float(0))
+            input_padding_mask = input_padding_mask.astype(value.dtype).unsqueeze(-1)
+            value *= input_padding_mask
+        self.value = value.reshape([N, Len_in, self.num_heads, self.head_dim])
+        if bs_idx is not None:
+            self.value = self.value[bs_idx]
+        elif cs_batch is not None:
+            self.value = paddle.concat([
+                v.expand([cs ,-1, -1, -1]) for cs, v in zip(cs_batch, self.value)
+            ]) # cs_all, *, *, *
+
     def forward(self,
                 query,
                 reference_points,
@@ -118,20 +175,24 @@ class MSDeformableAttention(nn.Layer):
             output (Tensor): [bs, Length_{query}, C]
         """
         bs, Len_q = query.shape[:2]
-        Len_v = value.shape[1]
-        assert int(value_spatial_shapes.prod(1).sum()) == Len_v
+        if self.value is None:
+            bs, Len_v = value.shape[:2]
+            assert int(value_spatial_shapes.prod(1).sum()) == Len_v
 
-        value = self.value_proj(value)
-        if value_mask is not None:
-            value_mask = value_mask.astype(value.dtype).unsqueeze(-1)
-            value *= value_mask
-        value = value.reshape([bs, Len_v, self.num_heads, self.head_dim])
+            value = self.value_proj(value)
+            if value_mask is not None:
+                value_mask = value_mask.astype(value.dtype).unsqueeze(-1)
+                value *= value_mask
+            value = value.reshape([bs, Len_v, self.num_heads, self.head_dim])
 
-        if cs_batch is not None:
-            value = paddle.cat([
-                    v.expand(cs ,-1, -1, -1) for cs, v in zip(cs_batch, value)
-                ]) # cs_all, *, *, *
-            bs = value.shape[0]
+            if cs_batch is not None:
+                value = paddle.concat([
+                        v.expand([cs ,-1, -1, -1]) for cs, v in zip(cs_batch, value)
+                    ]) # cs_all, *, *, *
+                bs = value.shape[0]
+        else:
+            value = self.value
+            assert (value_spatial_shapes[:, 0] * value_spatial_shapes[:, 1]).sum() == value.shape[1]
 
         sampling_offsets = self.sampling_offsets(query).reshape(
             [bs, Len_q, self.num_heads, self.num_levels, self.num_points, 2])
@@ -184,14 +245,15 @@ class DeformableTransformerEncoderLayer(nn.Layer):
         self.norm1 = nn.LayerNorm(
             d_model, weight_attr=weight_attr, bias_attr=bias_attr)
         # ffn
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.activation = getattr(F, activation)
-        self.dropout2 = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout3 = nn.Dropout(dropout)
-        self.norm2 = nn.LayerNorm(
-            d_model, weight_attr=weight_attr, bias_attr=bias_attr)
-        self._reset_parameters()
+        self.ffn = FFN(d_model, dim_feedforward, dropout, activation, weight_attr, bias_attr)
+        #self.linear1 = nn.Linear(d_model, dim_feedforward)
+        #self.activation = getattr(F, activation)
+        #self.dropout2 = nn.Dropout(dropout)
+        #self.linear2 = nn.Linear(dim_feedforward, d_model)
+        #self.dropout3 = nn.Dropout(dropout)
+        #self.norm2 = nn.LayerNorm(
+        #    d_model, weight_attr=weight_attr, bias_attr=bias_attr)
+        #self._reset_parameters()
 
     def _reset_parameters(self):
         linear_init_(self.linear1)
@@ -203,9 +265,7 @@ class DeformableTransformerEncoderLayer(nn.Layer):
         return tensor if pos is None else tensor + pos
 
     def forward_ffn(self, src):
-        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
-        src = src + self.dropout3(src2)
-        src = self.norm2(src)
+        src = self.ffn(src)
         return src
 
     def forward(self,
@@ -289,20 +349,22 @@ class MultiHeadDecoderLayer(nn.Layer):
         #   d_model, weight_attr=weight_attr, bias_attr=bias_attr)
 
         # cross attention
+        self.n_head = n_head
         self.cross_attn = MultiHeadAttention(d_model, n_head, dropout=dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(
             d_model, weight_attr=weight_attr, bias_attr=bias_attr)
 
         # ffn
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.activation = getattr(F, activation)
-        self.dropout3 = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout4 = nn.Dropout(dropout)
-        self.norm3 = nn.LayerNorm(
-            d_model, weight_attr=weight_attr, bias_attr=bias_attr)
-        self._reset_parameters()
+        self.ffn = FFN(d_model, dim_feedforward, dropout, activation, weight_attr, bias_attr)
+        #self.linear1 = nn.Linear(d_model, dim_feedforward)
+        #self.activation = getattr(F, activation)
+        #self.dropout3 = nn.Dropout(dropout)
+        #self.linear2 = nn.Linear(dim_feedforward, d_model)
+        #self.dropout4 = nn.Dropout(dropout)
+        #self.norm3 = nn.LayerNorm(
+        #    d_model, weight_attr=weight_attr, bias_attr=bias_attr)
+        #self._reset_parameters()
 
     def _reset_parameters(self):
         linear_init_(self.linear1)
@@ -314,9 +376,7 @@ class MultiHeadDecoderLayer(nn.Layer):
         return tensor if pos is None else tensor + pos
 
     def forward_ffn(self, tgt):
-        tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt))))
-        tgt = tgt + self.dropout4(tgt2)
-        tgt = self.norm3(tgt)
+        tgt = self.ffn(tgt)
         return tgt
 
     def self_attn_forward(self, tgt, query_pos):
@@ -337,18 +397,23 @@ class MultiHeadDecoderLayer(nn.Layer):
         #srcs = kwargs["srcs"]
         bs = srcs.shape[0]
         if bs_all > bs:
-            tgt = tgt.view(bs, -1, c)
+            tgt = tgt.reshape([bs, -1, c])
             cs = bs_all // bs
         src_padding_masks = src_padding_masks
         posemb_2d = 0 if posemb_2d is None else posemb_2d
-        query_pos = paddle.zeros_like(tgt) if query_pos is None else query_pos.repeat(1,cs,1)
+        query_pos = paddle.zeros_like(tgt) if query_pos is None else query_pos.tile([1, cs, 1])
 
         # tgt2 = self.self_attn(q, k, value=tgt)
         #issue no transpose and [0]
+        seq_len = src_padding_masks.shape[-1]
+        src_padding_masks =  src_padding_masks.reshape([bs, -1])
+        src_padding_masks = src_padding_masks.reshape([bs, 1, 1, seq_len])
+        src_padding_masks = src_padding_masks.expand([-1, self.n_head, -1, -1])
+
         tgt2 = self.cross_attn((tgt + query_pos),
-                                (srcs + posemb_2d).reshape(bs, -1, c),
-                                srcs.reshape(bs, -1, c), attn_mask=src_padding_masks.reshape(bs, -1))
-        return tgt2.reshape(bs_all, seq, c)
+                                (srcs + posemb_2d).reshape([bs, -1, c]),
+                                srcs.reshape([bs, -1, c]), attn_mask=src_padding_masks)
+        return tgt2.reshape([bs_all, seq, c])
 
     def forward(self,
                 tgt,
@@ -390,6 +455,8 @@ class DeformableTransformerDecoderLayer(nn.Layer):
                  weight_attr=None,
                  bias_attr=None):
         super(DeformableTransformerDecoderLayer, self).__init__()
+        self.d_model = d_model
+        self.n_head = n_head
 
         # self attention
         self.self_attn = MultiHeadAttention(d_model, n_head, dropout=dropout)
@@ -405,14 +472,15 @@ class DeformableTransformerDecoderLayer(nn.Layer):
             d_model, weight_attr=weight_attr, bias_attr=bias_attr)
 
         # ffn
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.activation = getattr(F, activation)
-        self.dropout3 = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout4 = nn.Dropout(dropout)
-        self.norm3 = nn.LayerNorm(
-            d_model, weight_attr=weight_attr, bias_attr=bias_attr)
-        self._reset_parameters()
+        self.ffn = FFN(d_model, dim_feedforward, dropout, activation, weight_attr, bias_attr)
+        #self.linear1 = nn.Linear(d_model, dim_feedforward)
+        #self.activation = getattr(F, activation)
+        #self.dropout3 = nn.Dropout(dropout)
+        #self.linear2 = nn.Linear(dim_feedforward, d_model)
+        #self.dropout4 = nn.Dropout(dropout)
+        #self.norm3 = nn.LayerNorm(
+        #    d_model, weight_attr=weight_attr, bias_attr=bias_attr)
+        #self._reset_parameters()
 
     def _reset_parameters(self):
         linear_init_(self.linear1)
@@ -424,9 +492,7 @@ class DeformableTransformerDecoderLayer(nn.Layer):
         return tensor if pos is None else tensor + pos
 
     def forward_ffn(self, tgt):
-        tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt))))
-        tgt = tgt + self.dropout4(tgt2)
-        tgt = self.norm3(tgt)
+        tgt = self.ffn(tgt)
         return tgt
 
     def self_attn_forward(self, tgt, query_pos):
@@ -453,8 +519,11 @@ class DeformableTransformerDecoderLayer(nn.Layer):
                 query_pos_embed=None,
                 cs_batch=None):
 
+            # output = layer(output, reference_points, memory,
+             #              memory_spatial_shapes, memory_level_start_index, memory_valid_ratio    
+
         if reference_points.shape[-1] == 4:
-            memory_valid_ratios = paddle.concat([memory_valid_ratios, memory_valid_ratios], dim=-1)
+            memory_valid_ratios = paddle.concat([memory_valid_ratios, memory_valid_ratios], axis=-1)
         if memory_valid_ratios.shape[0] != reference_points.shape[0]:
             repeat_times = (reference_points.shape[0] // memory_valid_ratios.shape[0])
             memory_valid_ratios = memory_valid_ratios.repeat_interleave(repeat_times, axis=0)
@@ -499,13 +568,15 @@ class DeformableTransformerDecoder(nn.Layer):
                 memory_valid_ratios=None,
                 query_pos_embed=None,
                 ):
+
+                
         output = tgt
         intermediate = []
         for lid, layer in enumerate(self.layers):
             #forward(feat, query_pos, forward_reference_points, srcs, src_padding_masks, **kwargs)
             output = layer(output, reference_points, memory,
-                           memory_spatial_shapes, memory_level_start_index, memory_valid_ratios,
-                           memory_mask, query_pos_embed, cs_batch)
+                           memory_spatial_shapes, memory_level_start_index, memory_mask, memory_valid_ratios,
+                           query_pos_embed, cs_batch)
 
             if self.return_intermediate:
                 intermediate.append(output)

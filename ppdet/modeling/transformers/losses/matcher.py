@@ -14,7 +14,7 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 from scipy.optimize import linear_sum_assignment
 from paddle import nn
 
-from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+from ..utils import box_cxcywh_to_xyxy, generalized_box_iou
 
 
 class HungarianMatcher(nn.Layer):

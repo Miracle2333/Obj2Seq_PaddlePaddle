@@ -3,14 +3,14 @@
 # Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
 # ------------------------------------------------------------------------
 import numpy as np
-# import torch
+import paddle
 from paddle import nn
 from paddle.nn import functional as F
 
-from util.misc import inverse_sigmoid
+from ..utils import inverse_sigmoid
 from .classifiers import build_label_classifier
-from models.losses.classwise_criterion import ClasswiseCriterion
-from models.losses.set_criterion import SetCriterion
+from ..losses.classwise_criterion import ClasswiseCriterion
+from ..losses.set_criterion import SetCriterion
 
 
 class SeparateDetectHead(nn.Layer):
@@ -56,7 +56,7 @@ class SeparateDetectHead(nn.Layer):
         outputs = {
             "pred_logits": outputs_class.unsqueeze(-1) if  feat.dim() == 4 else outputs_class,
             "pred_boxes": outputs_coord,
-            "class_index": cls_idx if cls_idx is not None else paddle.zeros((bs, 1), dtype=torch.int64, device=outputs_class.device)
+            "class_index": cls_idx if cls_idx is not None else paddle.zeros((bs, 1), dtype=paddle.int64, device=outputs_class.device)
         }
 
         targets = kwargs.pop("targets", None)

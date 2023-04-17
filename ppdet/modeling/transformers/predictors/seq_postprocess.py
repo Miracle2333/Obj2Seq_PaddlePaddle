@@ -7,8 +7,8 @@ import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
 
-from util.misc import inverse_sigmoid
-from util.task_category import TaskCategory
+from ..utils import inverse_sigmoid
+from ..losses.classwise_criterion import TaskCategory
 
 
 class DetPoseProcess(nn.Layer):

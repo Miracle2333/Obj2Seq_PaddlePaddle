@@ -18,7 +18,7 @@ ResNet:
   num_stages: 4
 
 
-Det_Transformer:
+Obj_Transformer:
   num_queries: 300
   position_embed_type: sine
   nhead: 8

@@ -153,6 +153,7 @@ class Decode(BaseOperator):
 
         sample['im_shape'] = np.array(im.shape[:2], dtype=np.float32)
         sample['scale_factor'] = np.array([1., 1.], dtype=np.float32)
+        sample['orig_size'] = np.array(im.shape[:2], dtype=np.float32)
         return sample
 
 
@@ -4116,3 +4117,84 @@ class RandomErasingCrop(BaseOperator):
         sample = self.transform2(sample)
         sample = self.transform3(sample)
         return sample
+
+
+@register_op
+class GenerateClassificationResults(BaseOperator):
+    def __init__(self, num_cats):
+        super(GenerateClassificationResults, self).__init__()
+        self.num_cats = num_cats
+
+    def apply(self, sample, context=None):
+        target = {}
+        target["labels"] = sample['gt_class']
+        target["boxes"] = sample['gt_bbox']
+        target["image_id"] = sample['im_id']
+        target["iscrowd"] = sample['is_crowd']
+        target["area"] = sample['gt_area']
+        
+        multi_labels = np.unique(target["labels"])
+        multi_label_onehot = np.zeros(self.num_cats)
+        multi_label_onehot[multi_labels] = 1
+        multi_label_weights = np.ones_like(multi_label_onehot)
+
+        # filter crowd items
+        keep = np.where(target["iscrowd"] == 0)
+        fields = ["labels", "area", "iscrowd"]
+        if "boxes" in target:
+            fields.append("boxes")
+        if "masks" in target:
+            fields.append("masks")
+        if "keypoints" in target:
+            fields.append("keypoints")
+        for field in fields:
+            target[field] = target[field][keep[0]]
+
+        sample_prob = np.zeros_like(multi_label_onehot) - 1
+        sample_prob[np.unique(target["labels"])] = 1
+        target["multi_label_onehot"] = multi_label_onehot
+        target["multi_label_weights"] = multi_label_weights
+        target["force_sample_probs"] = sample_prob
+
+        sample['labels'] = target["labels"] 
+        sample['boxes'] = target["boxes"]
+        sample['image_id'] = target["image_id"] 
+        sample['iscrowd'] = target["iscrowd"]
+        sample['area'] = target["area"]
+
+        sample["multi_label_onehot"] = target["multi_label_onehot"]
+        sample['multi_label_weights'] =  target["multi_label_weights"]
+        sample["force_sample_probs"] = target["force_sample_probs"]
+
+        return sample
+
+
+class RearrangeByCls(BaseOperator):
+    def __init__(self):
+        super(RearrangeByCls, self).__init__()
+        # TODO: min_keypoints_train is deperacated
+        min_keypoints_train = 0
+        keep_keys = ["size", "orig_size", "image_id", "multi_label_onehot", "multi_label_weights", "force_sample_probs"]
+        self.min_keypoints_train = min_keypoints_train
+        self.keep_keys = keep_keys
+
+    def apply(self, sample, context=None):
+        
+        
+        sample["class_label"] = np.unique(sample["labels"])
+
+        #new_target = {}
+        for icls in np.unique(sample["labels"]):
+            icls = icls.item()
+            sample[icls] = {}
+            where = np.where(sample["labels"] == icls)
+
+            sample[icls]["boxes"] = sample["boxes"][where[0]]
+            if icls == 0 and "keypoints" in sample:
+                sample[icls]["keypoints"] = sample["keypoints"][where[0]]
+
+        #for key in self.keep_keys:
+        #    new_target[key] = sample[key]
+
+        return sample
+

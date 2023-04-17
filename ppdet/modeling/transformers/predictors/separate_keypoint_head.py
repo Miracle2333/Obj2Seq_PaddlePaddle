@@ -3,13 +3,13 @@
 # Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
 # ------------------------------------------------------------------------
 import numpy as np
-# import torch
+import paddle
 from paddle import nn
 from paddle.nn import functional as F
 
-from util.misc import inverse_sigmoid
+from ..utils import inverse_sigmoid
 from .classifiers import build_label_classifier
-from models.losses.e2e_keypoint_criterion import KeypointSetCriterion
+from ..losses.e2e_keypoint_criterion import KeypointSetCriterion
 
 
 class SeparateKeypointHead(nn.Layer):

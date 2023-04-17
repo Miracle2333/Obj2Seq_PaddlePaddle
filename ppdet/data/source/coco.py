@@ -19,6 +19,7 @@ try:
 except Exception:
     from collections import Sequence
 import numpy as np
+import paddle
 from ppdet.core.workspace import register, serializable
 from .dataset import DetDataset
 
@@ -176,6 +177,7 @@ class COCODataSet(DetDataset):
                 gt_bbox = np.zeros((num_bbox, 4), dtype=np.float32)
                 gt_class = np.zeros((num_bbox, 1), dtype=np.int32)
                 is_crowd = np.zeros((num_bbox, 1), dtype=np.int32)
+                gt_bbox_area = np.zeros((num_bbox, 1), dtype=np.float32)
                 gt_poly = [None] * num_bbox
                 gt_track_id = -np.ones((num_bbox, 1), dtype=np.int32)
 
@@ -186,6 +188,7 @@ class COCODataSet(DetDataset):
                     gt_class[i][0] = self.catid2clsid[catid]
                     gt_bbox[i, :] = box['clean_bbox']
                     is_crowd[i][0] = box['iscrowd']
+                    gt_bbox_area[i][0] = gt_bbox[i, 2] * gt_bbox[i, 3]
                     # check RLE format 
                     if 'segmentation' in box and box['iscrowd'] == 1:
                         gt_poly[i] = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
@@ -215,6 +218,7 @@ class COCODataSet(DetDataset):
                     'gt_class': gt_class,
                     'gt_bbox': gt_bbox,
                     'gt_poly': gt_poly,
+                    'gt_area': gt_bbox_area
                 }
                 if has_track_id:
                     gt_rec.update({'gt_track_id': gt_track_id})
@@ -228,6 +232,15 @@ class COCODataSet(DetDataset):
                     seg_path = os.path.join(self.dataset_dir, 'stuffthingmaps',
                                             'train2017', im_fname[:-3] + 'png')
                     coco_rec.update({'semantic': seg_path})
+
+            
+            #target = {}
+            #target["labels"] = coco_rec['gt_class']
+            #target["boxes"] = coco_rec['gt_bbox']
+            #target["image_id"] = coco_rec['im_id']
+            #target["iscrowd"] = coco_rec['is_crowd']
+            #target["area"] = coco_rec['gt_area']
+            #coco_rec["target"] =  target
 
             logger.debug('Load file: {}, im_id: {}, h: {}, w: {}.'.format(
                 im_path, img_id, im_h, im_w))

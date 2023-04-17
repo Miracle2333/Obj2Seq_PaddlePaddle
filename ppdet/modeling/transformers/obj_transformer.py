@@ -20,18 +20,24 @@ from __future__ import division
 from __future__ import print_function
 
 import math
+from tkinter import N
 from venv import create
+from numpy import arange
 import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
 from paddle import ParamAttr
 
 from ppdet.core.workspace import register
-from .attention_layers import DeformableTransformerEncoderLayer, DeformableTransformerEncoder, DeformableTransformerDecoderLayer, DeformableTransformerDecoderLayer
+from .attention_layers import DeformableTransformerEncoderLayer,\
+     DeformableTransformerEncoder, DeformableTransformerDecoderLayer,\
+         DeformableTransformerDecoder
 from .position_encoding import PositionEmbedding
 from .utils import _get_clones, get_valid_ratio
 from ..initializer import linear_init_, constant_, xavier_uniform_, normal_
 from .prompt_indicator import PromptIndicator
+from .predictors import build_detect_predictor
+
 #from .models.object_decoder import ObjectDecoder
 
 __all__ = ['Obj_Transformer']
@@ -58,14 +64,22 @@ class Obj_Transformer(nn.Layer):
                  activation="relu",
                  lr_mult=0.1,
                  pe_temperature=10000,
-                 pe_offset=-0.5):
+                 pe_offset=-0.5,
+                 model=None):
         super(Obj_Transformer, self).__init__()
         assert position_embed_type in ['sine', 'learned'], \
             f'ValueError: position_embed_type not supported {position_embed_type}!'
         assert len(in_feats_channel) <= num_feature_levels
+       
+        self.hidden_dim = hidden_dim
+        self.d_model = hidden_dim
+        self.nhead = nhead
+        self.num_feature_levels = num_feature_levels
+        self.num_queries = num_queries
 
-        #input from args
-        self.spatial_prior = args.spatial_prior
+
+        args = model.MODEL
+        self.spatial_prior = args.OBJECT_DECODER.spatial_prior
         # prompt_indicator
         if args.with_prompt_indicator:
             self.prompt_indicator = PromptIndicator(args.PROMPT_INDICATOR)
@@ -77,13 +91,21 @@ class Obj_Transformer(nn.Layer):
         #    self.object_decoder = ObjectDecoder(self.d_model, args=args.OBJECT_DECODER)
         #else:
         #    self.object_decoder = None
-        self.detect_head = detect_head
-        
+        self.num_layers = args.OBJECT_DECODER.num_layers
+        num_decoder_layers = self.num_layers 
+        self.num_queries = args.OBJECT_DECODER.num_query_position
+        self.refine_reference_points = args.OBJECT_DECODER.refine_reference_points
+        self.detect_head = build_detect_predictor(args.OBJECT_DECODER.HEAD)
+        self.with_query_pos_embed = args.OBJECT_DECODER.with_query_pos_embed
+        num_queries = self.num_queries
+        if self.refine_reference_points:
+            self.detect_head = _get_clones(self.detect_head, self.num_layers)
+            # reset params
+            for head in self.detect_head[1:]:
+                head.reset_parameters_as_refine_head()
+        else:
+            self.detect_head = nn.ModuleList([self.detect_head for _ in range(self.num_layers)])
 
-        self.hidden_dim = hidden_dim
-        self.nhead = nhead
-        self.num_feature_levels = num_feature_levels
-        self.num_queries = num_queries
 
 
         encoder_layer = DeformableTransformerEncoderLayer(
@@ -150,11 +172,12 @@ class Obj_Transformer(nn.Layer):
 
     @classmethod
     def from_config(cls, cfg, input_shape):
-        detect_head = create(cfg(cfg['head']))
+         #input from args
+        args = cfg['model'] 
         return {'in_feats_channel': [i.channels for i in input_shape],
-                "detect_head": detect_head }
+                }
 
-    def forward(self, src_feats, src_mask=None, inputs=None, is_training=True, *args, **kwargs):
+    def forward(self, src_feats, src_mask=None, inputs=None):
         srcs = []
         for i in range(len(src_feats)):
             srcs.append(self.input_proj[i](src_feats[i]))
@@ -222,8 +245,12 @@ class Obj_Transformer(nn.Layer):
         #return (hs, memory, reference_points)
 
         outputs, loss_dict = {}, {}
-        targets = inputs[1]
+        #targets = inputs[1]
+        inputs, targets = self.generate_targets(inputs)
         self.targets = targets
+        if self.training:
+            assert inputs is not None
+            assert 'gt_bbox' in inputs and 'gt_class' in inputs
        
         if self.prompt_indicator is not None:
             cls_outputs, cls_loss_dict = self.prompt_indicator(memory, mask_flatten, targets=targets, kwargs=cls_kwargs)
@@ -250,8 +277,6 @@ class Obj_Transformer(nn.Layer):
         cs_batch = kwargs.pop('cs_batch', None)
         memory_valid_ratios = kwargs.pop('src_valid_ratios')
     
-
-
         dec_outputs = self.decoder(tgt_object, reference_points, memory, mask_flatten,\
             memory_spatial_shapes, memory_level_start_index, cs_batch, memory_valid_ratios, query_embed)
         
@@ -359,4 +384,87 @@ class Obj_Transformer(nn.Layer):
         else:
             raise ValueError(f'unknown {self.spatial_prior} spatial prior')
         return reference_points, query_embed
+
+    def generate_targets(self, inputs):
+        targets = self.generateClassificationResults(inputs)
+        targets = self.rearrangeByCls(targets)
+        #for target_key in self.keep_keys:
+        #    inputs.pop(target_key)
+
+        return inputs, targets
+
+    
+    def generateClassificationResults(self, sample):
+        num_cats = 80
+        keep_keys = ["size", "orig_size", "image_id", "multi_label_onehot", "multi_label_weights", "force_sample_probs", "num_classes"]
+        self.keep_keys = keep_keys
+        targets = []
+        
+        for i, _ in enumerate(sample['gt_class']):
+            target = {}
+            target["num_classes"] = paddle.to_tensor(num_cats)
+            target["labels"] = sample['gt_class'][i]
+            target["boxes"] = sample['gt_bbox'][i]
+            target["image_id"] = sample['im_id'][i]
+            target["iscrowd"] = sample['is_crowd'][i]
+            target["area"] = sample['gt_area'][i]
+            target["size"] =  sample['im_shape'][i]
+            target['orig_size'] = sample['orig_size'][i]
+            multi_labels = target["labels"].unique()
+            multi_label_onehot = paddle.zeros(paddle.to_tensor(num_cats))
+            multi_label_onehot[multi_labels] = 1
+            multi_label_weights = paddle.ones_like(paddle.to_tensor(multi_label_onehot))
+
+            # filter crowd items
+            keep = paddle.where(target["iscrowd"] == 0)
+            #keep = target["iscrowd"][i] == 0
+            fields = ["labels", "area", "iscrowd"]
+            if "boxes" in target:
+                fields.append("boxes")
+            if "masks" in target:
+                fields.append("masks")
+            if "keypoints" in target:
+                fields.append("keypoints")
+            for field in fields:
+                tmp = target[field]
+                if field == "boxes":
+                    tmp = tmp[keep[0]][:, 0, :]
+                else:
+                    tmp = tmp[keep] 
+                target[field] = tmp
+
+            sample_prob = paddle.zeros_like(multi_label_onehot) - 1
+            sample_prob[target["labels"].unique()] = 1
+            target["multi_label_onehot"] = multi_label_onehot
+            target["multi_label_weights"] = multi_label_weights
+            target["force_sample_probs"] = sample_prob
+            targets.append(target)
+        return targets
+    
+
+    def rearrangeByCls(self, samples):
+        min_keypoints_train = 0
+        new_targets = []
+
+        for i, sample in enumerate(samples):
+            new_target = {}
+            sample["class_label"] = []
+            sample["class_label"] = sample["labels"].unique()
+            
+            for icls in sample["labels"].unique():
+                icls = icls.item()
+                new_target[icls] = {}
+                where = paddle.where(sample["labels"] == icls)
+                tmp = sample["boxes"]
+                new_target[icls]["boxes"] = tmp[where[0]][:, 0, :]
+                
+                if icls == 0 and "keypoints" in sample:
+                    new_target[icls]["keypoints"] = sample["keypoints"][where[0]][:, 0, :]
+
+            for key in self.keep_keys:
+                new_target[key] = sample[key]
+            new_targets.append(new_target)
+
+        return new_targets
+
         

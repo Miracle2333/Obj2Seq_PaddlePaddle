@@ -2,14 +2,76 @@
 # Obj2Seq: Formatting Objects as Sequences with Class Prompt for Visual Tasks
 # Copyright (c) 2022 CASIA & Sensetime. All Rights Reserved.
 # ------------------------------------------------------------------------
+import json
 import paddle
 from paddle import nn
 
-from util.misc import (nested_tensor_from_tensor_list, interpolate,
+from ..misc import (nested_tensor_from_tensor_list, interpolate,
                        is_main_process, get_world_size, is_dist_avail_and_initialized)
-from util.task_category import TaskCategory
-
 from .unified_single_class_criterion import UnifiedSingleClassCriterion
+
+from argparse import Namespace
+
+
+class TaskCategory():
+    def __init__(self, task_file, num_classes):
+        task_content = json.load(open(task_file))
+        self.tasks = [Namespace(
+            index=idx,
+            name=it['name'],
+            num_steps=it['num_steps'],
+            required_outputs=it['required_outputs'],
+            required_targets=it['required_targets'],
+            losses=it['losses'],
+        ) for idx, it in enumerate(task_content)]
+        self.name2task = {
+            t.name: t for t in self.tasks
+        }
+
+        num_cats = [it['num_cats'] for it in task_content]
+        currentIndex = 0
+        all_cats = num_cats[0]
+        self.id_to_index = []
+        for i in range(num_classes):
+            if i >= all_cats:
+                currentIndex += 1
+                all_cats += num_cats[currentIndex]
+            self.id_to_index.append(currentIndex)
+        self.id_to_index = paddle.to_tensor(self.id_to_index, dtype=paddle.int32)
+
+    def __getitem__(self, tId):
+        if isinstance(tId, int):
+            return self.tasks[tId]
+        elif isinstance(tId, str):
+            return self.name2task[tId]
+        else:
+            return NotImplemented
+
+    def getTaskCorrespondingIds(self, bs_idx, cls_idx):
+        """
+        Args:
+            cls_idx: Tensor(bs, cs)
+        """
+        taskIndexes = self.id_to_index[cls_idx] # cs_all
+        tasks = {}
+        for taskIdx in taskIndexes.unique():
+            tasks[taskIdx.item()] = {
+                "indexes": (taskIndexes == taskIdx),
+                "cls_idx": cls_idx[taskIndexes == taskIdx],
+                "bs_idx": bs_idx[taskIndexes == taskIdx],
+            }
+        return tasks
+
+    def arrangeBySteps(self, cls_idx, *args):
+        tIds = [self.id_to_index[ic] for ic in cls_idx]
+        nSteps = paddle.to_tensor([self.tasks[tId].num_steps for tId in tIds])
+        nSteps, indices = nSteps.sort(descending=True), nSteps.argsort(descending=True)
+        return (nSteps, cls_idx[indices], *[a[indices] if a is not None else None for a in args])
+
+    def getNumSteps(self, cls_idx, *args):
+        tIds = [self.id_to_index[ic] for ic in cls_idx]
+        nSteps = paddle.to_tensor([self.tasks[tId].num_steps for tId in tIds])
+        return nSteps
 
 
 class ClasswiseCriterion(nn.Layer):
@@ -30,7 +92,7 @@ class ClasswiseCriterion(nn.Layer):
         loss_dicts_all = []
         for tKey, output in outputs.items():
             # device = output['pred_logits'].device
-            device = None
+            device = output['pred_logits'].place
             cs_all, num_obj = output['pred_logits'].shape
             num_boxes = self.get_num_boxes(targets, device)
             num_pts = self.get_num_pts(targets, device) if self.need_keypoints else 1
@@ -67,7 +129,7 @@ class ClasswiseCriterion(nn.Layer):
     def get_num_boxes(self, targets, device):
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         num_boxes = sum(sum(t[key]['boxes'].shape[0] for key in t if isinstance(key, int)) for t in targets)
-        num_boxes = paddle.to_tensor([num_boxes], dtype=paddle.float32)
+        num_boxes = paddle.to_tensor([num_boxes], dtype=paddle.float32, place=device)
         if is_dist_avail_and_initialized():
             paddle.distributed.all_reduce(num_boxes)
         num_boxes = paddle.clip(num_boxes / get_world_size(), min=1).item()

@@ -13,12 +13,13 @@
 # ------------------------------------------------------------------------
 # import torch
 # import torch.nn.functional as F
+import paddle
 from paddle import nn
 
 from .matcher_kps import build_matcher
 from .losses import sigmoid_focal_loss
-from util import box_ops
-from util.misc import (nested_tensor_from_tensor_list, interpolate,
+from ..utils import generalized_box_iou, box_cxcywh_to_xyxy
+from ..misc import (nested_tensor_from_tensor_list, interpolate,
                        get_world_size, is_dist_avail_and_initialized)
 
 
@@ -143,9 +144,9 @@ class KeypointSetCriterion(nn.Layer):
         losses = {}
         losses['loss_bbox'] = loss_bbox.sum() / num_boxes
 
-        loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
-            box_ops.box_cxcywh_to_xyxy(src_boxes),
-            box_ops.box_cxcywh_to_xyxy(target_boxes)))
+        loss_giou = 1 - torch.diag(generalized_box_iou(
+            box_cxcywh_to_xyxy(src_boxes),
+            box_cxcywh_to_xyxy(target_boxes)))
         losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
 

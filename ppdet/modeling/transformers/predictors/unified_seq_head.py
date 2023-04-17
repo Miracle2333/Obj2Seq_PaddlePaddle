@@ -9,13 +9,15 @@ from paddle.nn import functional as F
 import math
 
 import paddle
-from util.misc import inverse_sigmoid
+from ..utils import inverse_sigmoid
 # from timm.models.layers import trunc_normal_
 from .classifiers import build_label_classifier
 from .seq_postprocess import build_sequence_postprocess
-from ..models.attention_modules import DeformableDecoderLayer
+#from ..models.attention_modules import DeformableDecoderLayer
+
+from ..attention_layers import DeformableTransformerDecoderLayer as DeformableDecoderLayer
 # from models.ops.functions import ms_deform_attn_core_paddle
-from models.losses.classwise_criterion import ClasswiseCriterion
+from ..losses.classwise_criterion import ClasswiseCriterion
 from ..initializer import constant_, trunc_normal_
 from functools import reduce
 import operator
@@ -80,14 +82,17 @@ class UnifiedSeqHead(DeformableDecoderLayer):
         #   task_category (str: filename), args.num_classes (int)
         #   LOSS, CLASSIFIER
         #   other args as for decoder layer
-        super(UnifiedSeqHead, self).__init__(args)
+        d_model=args.hidden_dim
+        n_head=args.nheads
+        dropout=args.dropout
+        super(UnifiedSeqHead, self).__init__(d_model, n_head, dropout=dropout)
 
         if args.no_ffn:
             del self.ffn
             self.ffn = nn.Identity()
         if self.self_attn:
             del self.self_attn
-            self.self_attn = Attention(self.d_model, self.n_heads, dropout=args.dropout, proj=args.self_attn_proj)
+            self.self_attn = Attention(self.d_model, self.n_head, dropout=args.dropout, proj=args.self_attn_proj)
 
         # TODO: Number of classes
         self.classifier = build_label_classifier(args.CLASSIFIER)
@@ -129,7 +134,7 @@ class UnifiedSeqHead(DeformableDecoderLayer):
         tgt2, self.pre_kv = self.self_attn(tgt.reshape([1, bs*l, c]), pre_kv=self.pre_kv)
         return tgt2.reshape([bs, l, c])
 
-    def forward(self, feat, query_pos, reference_points, srcs, src_padding_masks, is_training, **kwargs):
+    def forward(self, feat, query_pos, reference_points, srcs, src_padding_masks, **kwargs):
         # feat: cs_all, nobj, c
         # srcs: bs, l, c
         # reference_points: cs_all, nobj, 2
@@ -157,11 +162,17 @@ class UnifiedSeqHead(DeformableDecoderLayer):
             if self.pos_emb is not None:
                 feat = feat + self.pos_emb.weight[id_step]
             forward_reference_points = reference_points.detach()
-            output_feat = super().forward(feat, query_pos, forward_reference_points, srcs, src_padding_masks, **kwargs)
+            memory_spatial_shapes = kwargs['src_spatial_shapes']
+            memory_level_start_index = kwargs['src_level_start_index']
+            memory_valid_ratios = kwargs['src_valid_ratios'] 
+            cs_batch = kwargs['cs_batch']
+
+            output_feat = super().forward(feat, forward_reference_points, srcs, memory_spatial_shapes, \
+                memory_level_start_index, src_padding_masks, memory_valid_ratios, query_pos, cs_batch)
             output_signal = output_embed(output_feat).squeeze(-1)
             output_signals.append(output_signal)
 
-            feat = self.generate_feat_for_next_step(output_feat, output_signal, reference_points, None,id_step)
+            feat = self.generate_feat_for_next_step(output_feat, output_signal, reference_points, None, id_step)
             reference_points = self.adjust_reference_points(output_signals, reference_points, id_step)
             # TODO: make this more suitable for other tasks
             if (num_steps == id_step + 1).sum() > 0 and id_step < self.num_steps:
