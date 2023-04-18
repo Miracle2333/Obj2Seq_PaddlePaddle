@@ -412,8 +412,18 @@ class Obj_Transformer(nn.Layer):
             target['orig_size'] = sample['orig_size'][i]
             multi_labels = target["labels"].unique()
             multi_label_onehot = paddle.zeros(paddle.to_tensor(num_cats))
-            multi_label_onehot[multi_labels] = 1
-            multi_label_weights = paddle.ones_like(paddle.to_tensor(multi_label_onehot))
+
+            if multi_labels.shape[0] != 0:
+                multi_label_onehot[multi_labels] = 1
+                multi_label_weights = paddle.ones_like(paddle.to_tensor(multi_label_onehot))
+            else:
+                multi_label_weights = paddle.ones_like(paddle.to_tensor(multi_label_onehot))
+                sample_prob = paddle.zeros_like(multi_label_onehot) - 1
+                target["multi_label_onehot"] = multi_label_onehot
+                target["multi_label_weights"] = multi_label_weights
+                target["force_sample_probs"] = sample_prob
+                targets.append(target)
+                continue
 
             # filter crowd items
             keep = paddle.where(target["iscrowd"] == 0)
@@ -448,8 +458,13 @@ class Obj_Transformer(nn.Layer):
 
         for i, sample in enumerate(samples):
             new_target = {}
-            sample["class_label"] = []
+            #sample["class_label"] = []
             sample["class_label"] = sample["labels"].unique()
+            if sample["labels"].shape[0] == 0:
+                for key in self.keep_keys:
+                    new_target[key] = sample[key]
+                new_targets.append(new_target)
+                continue
             
             for icls in sample["labels"].unique():
                 icls = icls.item()

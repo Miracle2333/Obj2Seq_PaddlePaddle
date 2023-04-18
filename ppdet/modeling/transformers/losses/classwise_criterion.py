@@ -6,8 +6,7 @@ import json
 import paddle
 from paddle import nn
 
-from ..misc import (nested_tensor_from_tensor_list, interpolate,
-                       is_main_process, get_world_size, is_dist_avail_and_initialized)
+from ..misc import (get_world_size, is_dist_avail_and_initialized)
 from .unified_single_class_criterion import UnifiedSingleClassCriterion
 
 from argparse import Namespace

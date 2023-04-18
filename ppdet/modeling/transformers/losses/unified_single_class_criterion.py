@@ -124,26 +124,28 @@ class UnifiedSingleClassCriterion(nn.Layer):
            The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
         """
         assert 'pred_boxes' in outputs
+        losses = {}
         idx = self._get_src_permutation_idx(indices)
         if 0 == idx[0].numel().item() and 0 == idx[1].numel().item():
             src_boxes = paddle.to_tensor([], dtype="float32").reshape([0, 4])
         else:
             src_boxes = outputs['pred_boxes'][idx].reshape([-1, 4])
-        # target_boxes = paddle.concat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], axis=0)
-        target_boxes_list = [self.none_idx(t, i) for t, (_, i) in zip(targets, indices)]
-        target_boxes = paddle.concat(target_boxes_list, axis=0)  \
+
+        if 0 == src_boxes.numel().item():
+            losses['loss_bbox'] = 0
+            losses['loss_bbox'] = paddle.to_tensor(losses['loss_bbox'], dtype="float32")
+            losses['loss_giou'] = 0
+            losses['loss_giou'] = paddle.to_tensor(losses['loss_giou'], dtype="float32")
+
+        else:
+            target_boxes_list = [self.none_idx(t, i) for t, (_, i) in zip(targets, indices)]
+            target_boxes = paddle.concat(target_boxes_list, axis=0)  \
                                         if sum([x.shape[0] for x in target_boxes_list]) > 0  \
                                         else target_boxes_list[0]
-        target_boxes = target_boxes.reshape([-1, 4]) if target_boxes.shape != [0, 4] else target_boxes
+            target_boxes = target_boxes.reshape([-1, 4]) if target_boxes.shape != [0, 4] else target_boxes
+            loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
+            losses['loss_bbox'] = loss_bbox.sum() / self.loss_normalization[self.box_normalization]
 
-        loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
-
-        losses = {}
-        losses['loss_bbox'] = loss_bbox.sum() / self.loss_normalization[self.box_normalization]
-
-        if 0 == src_boxes.numel().item() or 0 == target_boxes.numel().item():
-            losses['loss_giou'] = 0
-        else:
             loss_giou = 1 - paddle.diag(generalized_box_iou(
                 box_cxcywh_to_xyxy(src_boxes),
                 box_cxcywh_to_xyxy(target_boxes)))
@@ -171,9 +173,9 @@ class UnifiedSingleClassCriterion(nn.Layer):
         #     sigmas = np.append(sigmas, np.array([sigma_center]), axis=0)
         #     tgt_flags = paddle.concat([tgt_flags, torch.ones([tgt_flags.size(0), 1]).type_as(tgt_flags)], axis=1)
 
-        sigmas = torch.tensor(sigmas).type_as(tgt_joints)
-        d_sq = torch.square(src_joints - tgt_joints).sum(-1)
-        loss_oks = 1 - torch.exp(-1 * d_sq / (2 * tgt_areas[:, None] * sigmas[None, :] + 1e-15))
+        sigmas = paddle.to_tensor(sigmas).type_as(tgt_joints)
+        d_sq = paddle.square(src_joints - tgt_joints).sum(-1)
+        loss_oks = 1 - paddle.exp(-1 * d_sq / (2 * tgt_areas[:, None] * sigmas[None, :] + 1e-15))
         # loss_oks = loss_oks * tgt_flags * with_joint_flag[:, None]
         loss_oks = loss_oks * tgt_flags
         loss_oks = loss_oks.sum(-1) / (tgt_flags.sum(-1) + eps) # 每一个object单独计算了oks

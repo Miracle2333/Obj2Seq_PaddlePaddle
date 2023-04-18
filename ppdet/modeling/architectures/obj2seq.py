@@ -37,6 +37,7 @@ class OBJ2SEQ(BaseArch):
     def __init__(self,
                  backbone,
                  transformer='DETRTransformer',
+                 post_process=None,
                  with_mask=False,
                  exclude_post_process=False):
         super(OBJ2SEQ, self).__init__()
@@ -44,6 +45,7 @@ class OBJ2SEQ(BaseArch):
         self.transformer = transformer
         self.with_mask = with_mask
         self.exclude_post_process = exclude_post_process
+        self.post_process = post_process
 
     @classmethod
     def from_config(cls, cfg, *args, **kwargs):
@@ -52,10 +54,12 @@ class OBJ2SEQ(BaseArch):
         # neck
         kwargs = {'input_shape': backbone.out_shape}
         transformer = create(cfg['transformer'], **kwargs)
+        postprocessor = create(cfg['post_process'], **kwargs)
 
         return {
             'backbone': backbone,
             'transformer': transformer,
+            'post_process': postprocessor
         }
 
     def _forward(self):
@@ -74,6 +78,7 @@ class OBJ2SEQ(BaseArch):
             return loss_dict
         else:
             outputs_bbox = preds['detection']
+            outputs_preds = self.post_process(preds)
             return (outputs_bbox['pred_boxes'], outputs_bbox['pred_logits'], None)
 
 

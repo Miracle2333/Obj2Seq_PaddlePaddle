@@ -7,6 +7,7 @@ hidden_dim: 256
 OBJ2SEQ:
   backbone: ResNet
   transformer: Obj_Transformer
+  post_process: MutiClassPostProcess
 
 ResNet:
   # index 0 stands for res2
@@ -31,6 +32,9 @@ Obj_Transformer:
   num_feature_levels: 4
   num_encoder_points: 4
   num_decoder_points: 4
+
+MutiClassPostProcess: {}
+
 
 
 

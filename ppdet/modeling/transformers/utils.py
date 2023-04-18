@@ -23,6 +23,7 @@ from __future__ import print_function
 
 import copy
 import math
+import numpy as np
 import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
