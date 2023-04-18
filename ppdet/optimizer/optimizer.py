@@ -328,6 +328,8 @@ class OptimizerBuilder():
                     if any([k in n
                             for k in group['params']]) and p.trainable is True
                 }
+                print(_params.keys())
+                print('weight decay is 0.')
                 _group = group.copy()
                 _group.update({'params': list(_params.values())})
 
