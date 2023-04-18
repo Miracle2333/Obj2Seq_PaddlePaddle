@@ -191,7 +191,7 @@ class UnifiedSeqHead(DeformableDecoderLayer):
         if targets is not None and self.training:
             loss_dict = self.criterion(outputs, targets)
         else:
-            assert not self.training, "Targets are required for training mode (unified_seq_head.py)"
+            assert not self.training
             loss_dict = {}
         return outputs, loss_dict
 

@@ -809,7 +809,23 @@ class MutiClassPostProcess(object):
                 s, indices = s[:100], indices[:100]
                 # results_det.append({'scores': s, 'labels': out_labels[indices], 'boxes': out_bbox[indices, :]})
                 results_det.append({'scores': s, 'labels': out_labels[indices], 'boxes': out_bbox[indices]})
-            return results_det
+
+            bbox_pred = paddle.stack([r['boxes'] for r in results_det], axis=0)
+            labels =  paddle.stack([r['labels'] for r in results_det], axis=0)
+            scores =  paddle.stack([r['scores'] for r in results_det], axis=0)
+
+            bbox_pred = paddle.concat(
+            [
+                labels.unsqueeze(-1).astype('float32'), scores.unsqueeze(-1),
+                bbox_pred
+            ],
+            axis=-1)
+
+            bbox_num = paddle.to_tensor(
+                bbox_pred.shape[1], dtype='int32').tile([bbox_pred.shape[0]])
+            bbox_pred = bbox_pred.reshape([-1, 6])
+
+            return bbox_pred, bbox_num
 
         if "pose" in outputs:
             output = outputs["pose"]

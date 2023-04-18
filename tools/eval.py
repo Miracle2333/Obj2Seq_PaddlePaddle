@@ -32,9 +32,9 @@ import paddle
 from ppdet.core.workspace import create, load_config, merge_config
 from ppdet.utils.check import check_gpu, check_npu, check_xpu, check_mlu, check_version, check_config
 from ppdet.utils.cli import ArgsParser, merge_args
-from ppdet.engine import Trainer, Trainer_ARSL, init_parallel_env
+from configs.obj2seq.config import get_config
+from ppdet.engine import Trainer, init_parallel_env
 from ppdet.metrics.coco_utils import json_eval_results
-from ppdet.slim import build_slim_model
 
 from ppdet.utils.logger import setup_logger
 logger = setup_logger('eval')
@@ -135,17 +135,11 @@ def run(FLAGS, cfg):
 
     # init parallel environment if nranks > 1
     init_parallel_env()
-    ssod_method = cfg.get('ssod_method', None)
-    if ssod_method == 'ARSL':
-        # build ARSL_trainer
-        trainer = Trainer_ARSL(cfg, mode='eval')
-        # load ARSL_weights
-        trainer.load_weights(cfg.weights, ARSL_eval=True)
-    else:
-        # build trainer
-        trainer = Trainer(cfg, mode='eval')
-        #load weights
-        trainer.load_weights(cfg.weights)
+   
+    # build trainer
+    trainer = Trainer(cfg, mode='eval')
+    #load weights
+    trainer.load_weights(cfg.weights)
 
     # training
     if FLAGS.slice_infer:
@@ -164,6 +158,9 @@ def main():
     cfg = load_config(FLAGS.config)
     merge_args(cfg, FLAGS)
     merge_config(FLAGS.opt)
+
+    cfg_obj2seq = get_config(FLAGS.config, cfg)
+    merge_args(cfg, cfg_obj2seq)
 
     # disable npu in config by default
     if 'use_npu' not in cfg:
@@ -191,8 +188,6 @@ def main():
     else:
         place = paddle.set_device('cpu')
 
-    if FLAGS.slim_config:
-        cfg = build_slim_model(cfg, FLAGS.slim_config, mode='eval')
 
     check_config(cfg)
     check_gpu(cfg.use_gpu)

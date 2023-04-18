@@ -187,7 +187,6 @@ class PromptIndicator(nn.Layer):
         if targets is not None and self.training:
             loss_dict = self.criterion(outputs, aux_outputs, targets)
         else:
-            assert not targets
             loss_dict = {}
         # targets["cls_class_prompts"] = class_prompts
 

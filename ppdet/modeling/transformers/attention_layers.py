@@ -405,10 +405,11 @@ class MultiHeadDecoderLayer(nn.Layer):
 
         # tgt2 = self.self_attn(q, k, value=tgt)
         #issue no transpose and [0]
-        seq_len = src_padding_masks.shape[-1]
-        src_padding_masks =  src_padding_masks.reshape([bs, -1])
-        src_padding_masks = src_padding_masks.reshape([bs, 1, 1, seq_len])
-        src_padding_masks = src_padding_masks.expand([-1, self.n_head, -1, -1])
+        if src_padding_masks is not None:
+            seq_len = src_padding_masks.shape[-1]
+            src_padding_masks =  src_padding_masks.reshape([bs, -1])
+            src_padding_masks = src_padding_masks.reshape([bs, 1, 1, seq_len])
+            src_padding_masks = src_padding_masks.expand([-1, self.n_head, -1, -1])
 
         tgt2 = self.cross_attn((tgt + query_pos),
                                 (srcs + posemb_2d).reshape([bs, -1, c]),

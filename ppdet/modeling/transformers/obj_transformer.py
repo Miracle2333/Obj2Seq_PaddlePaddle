@@ -21,7 +21,9 @@ from __future__ import print_function
 
 import math
 from tkinter import N
+from typing_extensions import Self
 from venv import create
+from importlib_metadata import SelectableGroups
 from numpy import arange
 import paddle
 import paddle.nn as nn
@@ -399,6 +401,14 @@ class Obj_Transformer(nn.Layer):
         keep_keys = ["size", "orig_size", "image_id", "multi_label_onehot", "multi_label_weights", "force_sample_probs", "num_classes"]
         self.keep_keys = keep_keys
         targets = []
+        if not self.training:
+            sample['gt_class'] = [paddle.to_tensor([], dtype="int32").reshape([0, 1]) for _ in range(len(sample['im_id']))]
+            sample['gt_bbox'] = [paddle.to_tensor([], dtype="float32").reshape([0, 4]) for _ in range(len(sample['im_id']))]
+            #sample['im_id'] = [paddle.to_tensor([], dtype="int64").reshape([0, 1])]
+            sample['is_crowd'] =  [paddle.to_tensor([], dtype="int32").reshape([0, 1]) for _ in range(len(sample['im_id']))]
+            sample['gt_area'] =  [paddle.to_tensor([], dtype="float32").reshape([0, 4]) for _ in range(len(sample['im_id']))]
+            #sample['im_shape'] =  [paddle.to_tensor([], dtype="float32").reshape([0, 2])]
+            #sample['orig_size'] = paddle.to_tensor([], dtype="float32").reshape([0, 2])
         
         for i, _ in enumerate(sample['gt_class']):
             target = {}

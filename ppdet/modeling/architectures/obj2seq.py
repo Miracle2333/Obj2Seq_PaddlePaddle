@@ -77,9 +77,9 @@ class OBJ2SEQ(BaseArch):
         if self.training:
             return loss_dict
         else:
-            outputs_bbox = preds['detection']
-            outputs_preds = self.post_process(preds)
-            return (outputs_bbox['pred_boxes'], outputs_bbox['pred_logits'], None)
+            bbox, bbox_num = self.post_process(preds, self.inputs['orig_size'])
+            output = {'bbox': bbox, 'bbox_num': bbox_num}
+            return output
 
 
     def get_loss(self):
