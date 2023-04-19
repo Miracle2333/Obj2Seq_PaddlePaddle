@@ -14,7 +14,7 @@ OptimizerBuilder:
   optimizer:
     type: AdamW
     weight_decay: 0.0001
-    param_groups:
-        -
-          params: ["class_prompts", "query_pos_embed", "pos_emb"]
-          weight_decay: 0.
+    #param_groups:
+    #    -
+    #      params: ["class_prompts", "query_pos_embed", "pos_emb"]
+    #      weight_decay: 0.

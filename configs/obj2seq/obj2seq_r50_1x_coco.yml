@@ -12,7 +12,7 @@ pretrain_weights: https://paddledet.bj.bcebos.com/models/pretrained/ResNet50_vb_
 
 log_iter: 73
 snapshot_epoch: 10
-save_dir: output/obj2seq_train_allow_empty/
+save_dir: output/obj2seq_decay/
 
 
 BASE: obj2seq.yml
