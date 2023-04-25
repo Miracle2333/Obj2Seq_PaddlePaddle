@@ -10,10 +10,10 @@ find_unused_parameters: True
 
 pretrain_weights: https://paddledet.bj.bcebos.com/models/pretrained/ResNet50_vb_normal_pretrained.pdparams
 
-log_iter: 73
-snapshot_epoch: 10
-save_dir: output/obj2seq_decay/
+log_iter: 365
 
+snapshot_epoch: 10
+save_dir: output/obj2seq_eval/
 
 BASE: obj2seq.yml
 

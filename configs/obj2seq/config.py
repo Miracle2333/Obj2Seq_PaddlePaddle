@@ -173,7 +173,7 @@ _C.MODEL.OBJECT_DECODER.HEAD.num_classes = 80
 _C.MODEL.OBJECT_DECODER.HEAD.task_category = "configs/tasks/coco_detection.json"
 ## for change structure in attention
 _C.MODEL.OBJECT_DECODER.HEAD.self_attn_proj = True
-_C.MODEL.OBJECT_DECODER.HEAD.cross_attn_no_value_proj = True
+_C.MODEL.OBJECT_DECODER.HEAD.cross_attn_no_value_proj = False
 _C.MODEL.OBJECT_DECODER.HEAD.no_ffn = True
 ## to deperacate
 _C.MODEL.OBJECT_DECODER.HEAD.keypoint_output = "nd_box_relative"

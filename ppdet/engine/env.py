@@ -37,7 +37,7 @@ def init_parallel_env():
     dist = 'PADDLE_TRAINER_ID' in env and 'PADDLE_TRAINERS_NUM' in env
     if dist:
         trainer_id = int(env['PADDLE_TRAINER_ID'])
-        local_seed = (99 + trainer_id)
+        local_seed = (42 + trainer_id)
         random.seed(local_seed)
         np.random.seed(local_seed)
 

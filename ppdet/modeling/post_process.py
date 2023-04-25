@@ -16,7 +16,6 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
-from zmq import PROTOCOL_ERROR_ZMTP_MALFORMED_COMMAND_WELCOME
 from ppdet.core.workspace import register
 from ppdet.modeling.bbox_utils import nonempty_bbox
 from .transformers import bbox_cxcywh_to_xyxy
@@ -809,7 +808,7 @@ class MutiClassPostProcess(object):
                 s, indices = s[:100], indices[:100]
                 # results_det.append({'scores': s, 'labels': out_labels[indices], 'boxes': out_bbox[indices, :]})
                 results_det.append({'scores': s, 'labels': out_labels[indices], 'boxes': out_bbox[indices]})
-
+                
             bbox_pred = paddle.stack([r['boxes'] for r in results_det], axis=0)
             labels =  paddle.stack([r['labels'] for r in results_det], axis=0)
             scores =  paddle.stack([r['scores'] for r in results_det], axis=0)
@@ -880,7 +879,7 @@ class KeypointPostProcess(object):
         img_h, img_w = target_sizes.unbind(1) # bs
         scale_fct = paddle.stack([img_w, img_h], axis=1) # bs, 2
         out_keypoints = out_keypoints * scale_fct[:, None, None, :] # bs, nobj, 17, 2
-        ones = PROTOCOL_ERROR_ZMTP_MALFORMED_COMMAND_WELCOME.ones_like(out_keypoints)[..., :1]
+        ones = paddle.ones_like(out_keypoints)[..., :1]
         keypoints = paddle.concat([out_keypoints, ones], axis=-1)
 
         if "pred_boxes" in outputs:

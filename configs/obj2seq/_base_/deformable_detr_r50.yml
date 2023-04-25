@@ -1,5 +1,6 @@
 architecture: OBJ2SEQ
 pretrain_weights: https://paddledet.bj.bcebos.com/models/pretrained/ResNet50_vb_normal_pretrained.pdparams
+
 #pretrain_weights: ./output/obj2seq_r50_1x_coco/model_final.pdparams
 hidden_dim: 256
 #use_focal_loss: True
@@ -21,11 +22,11 @@ ResNet:
 
 
 Obj_Transformer:
-  num_queries: 100
+  num_queries: 300
   position_embed_type: sine
   nhead: 8
   num_encoder_layers: 6
-  num_decoder_layers: 4
+  num_decoder_layers: 6
   dim_feedforward: 1024
   #dropout: 0.1
   dropout: 0.0

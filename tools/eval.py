@@ -135,22 +135,13 @@ def run(FLAGS, cfg):
 
     # init parallel environment if nranks > 1
     init_parallel_env()
-   
     # build trainer
     trainer = Trainer(cfg, mode='eval')
     #load weights
     trainer.load_weights(cfg.weights)
 
     # training
-    if FLAGS.slice_infer:
-        trainer.evaluate_slice(
-            slice_size=FLAGS.slice_size,
-            overlap_ratio=FLAGS.overlap_ratio,
-            combine_method=FLAGS.combine_method,
-            match_threshold=FLAGS.match_threshold,
-            match_metric=FLAGS.match_metric)
-    else:
-        trainer.evaluate()
+    trainer.evaluate()
 
 
 def main():

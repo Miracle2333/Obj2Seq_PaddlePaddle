@@ -85,7 +85,7 @@ class UnifiedSeqHead(DeformableDecoderLayer):
         d_model=args.hidden_dim
         n_head=args.nheads
         dropout=args.dropout
-        super(UnifiedSeqHead, self).__init__(d_model, n_head, dropout=dropout)
+        super(UnifiedSeqHead, self).__init__(d_model, n_head, dropout=dropout, no_value_proj=args.cross_attn_no_value_proj)
 
         if args.no_ffn:
             del self.ffn

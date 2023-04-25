@@ -80,7 +80,8 @@ class MSDeformableAttention(nn.Layer):
                  num_heads=8,
                  num_levels=4,
                  num_points=4,
-                 lr_mult=0.1):
+                 lr_mult=0.1,
+                 no_value_proj=False):
         """
         Multi-Scale Deformable Attention Module
         """
@@ -102,7 +103,12 @@ class MSDeformableAttention(nn.Layer):
             bias_attr=ParamAttr(learning_rate=lr_mult))
 
         self.attention_weights = nn.Linear(embed_dim, self.total_points)
-        self.value_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.no_value_proj = no_value_proj
+        if not self.no_value_proj:
+            self.value_proj = nn.Linear(embed_dim, embed_dim)
+        else:
+            self.value_proj = nn.Identity()
         self.output_proj = nn.Linear(embed_dim, embed_dim)
         try:
             # use cuda op
@@ -133,8 +139,9 @@ class MSDeformableAttention(nn.Layer):
         constant_(self.attention_weights.weight)
         constant_(self.attention_weights.bias)
         # proj
-        xavier_uniform_(self.value_proj.weight)
-        constant_(self.value_proj.bias)
+        if not self.no_value_proj:
+            xavier_uniform_(self.value_proj.weight)
+            constant_(self.value_proj.bias)
         xavier_uniform_(self.output_proj.weight)
         constant_(self.output_proj.bias)
 
@@ -379,18 +386,18 @@ class MultiHeadDecoderLayer(nn.Layer):
         tgt = self.ffn(tgt)
         return tgt
 
-    def self_attn_forward(self, tgt, query_pos):
-        if query_pos is not None and query_pos.shape[0] != tgt.shape[0]: # False
-            cs = tgt.shape[0] // query_pos.shape[0]
-            query_pos_self = query_pos.repeat_interleave(repeats=cs, axis=0)
-        else:
-            query_pos_self = query_pos
+    #def self_attn_forward(self, tgt, query_pos):
+    #    if query_pos is not None and query_pos.shape[0] != tgt.shape[0]: # False
+    #        cs = tgt.shape[0] // query_pos.shape[0]
+    #        query_pos_self = query_pos.repeat_interleave(repeats=cs, axis=0)
+    #    else:
+    #        query_pos_self = query_pos
         #q = k = self.with_pos_embed(tgt, query_pos_self)
         # tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
         #tgt2 = self.self_attn(q.transpose([1, 0, 2]), k.transpose([1, 0, 2]), tgt.transpose([1, 0, 2]))[0].transpose([1, 0, 2])
-        q = k = self.with_pos_embed(tgt, query_pos_self)
-        tgt2 = self.self_attn(q, k, value=tgt)
-        return tgt2
+    #    q = k = self.with_pos_embed(tgt, query_pos_self)
+    #    tgt2 = self.self_attn(q, k, value=tgt)
+    #    return tgt2
 
     def cross_attn_forward(self, tgt, query_pos, srcs, src_padding_masks, posemb_2d=None):
         bs_all, seq, c = tgt.shape
@@ -399,7 +406,6 @@ class MultiHeadDecoderLayer(nn.Layer):
         if bs_all > bs:
             tgt = tgt.reshape([bs, -1, c])
             cs = bs_all // bs
-        src_padding_masks = src_padding_masks
         posemb_2d = 0 if posemb_2d is None else posemb_2d
         query_pos = paddle.zeros_like(tgt) if query_pos is None else query_pos.tile([1, cs, 1])
 
@@ -454,7 +460,8 @@ class DeformableTransformerDecoderLayer(nn.Layer):
                  n_points=4,
                  lr_mult=0.1,
                  weight_attr=None,
-                 bias_attr=None):
+                 bias_attr=None,
+                 no_value_proj=False):
         super(DeformableTransformerDecoderLayer, self).__init__()
         self.d_model = d_model
         self.n_head = n_head
@@ -467,7 +474,7 @@ class DeformableTransformerDecoderLayer(nn.Layer):
 
         # cross attention
         self.cross_attn = MSDeformableAttention(d_model, n_head, n_levels,
-                                                n_points, lr_mult)
+                                                n_points, lr_mult, no_value_proj)
         self.dropout2 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(
             d_model, weight_attr=weight_attr, bias_attr=bias_attr)

@@ -20,7 +20,6 @@ from __future__ import division
 from __future__ import print_function
 
 import math
-
 from numpy import arange
 import paddle
 import paddle.nn as nn
@@ -93,20 +92,8 @@ class Obj_Transformer(nn.Layer):
         self.num_layers = args.OBJECT_DECODER.num_layers
         num_decoder_layers = self.num_layers 
         self.num_queries = args.OBJECT_DECODER.num_query_position
-        self.refine_reference_points = args.OBJECT_DECODER.refine_reference_points
-        self.detect_head = build_detect_predictor(args.OBJECT_DECODER.HEAD)
-        self.with_query_pos_embed = args.OBJECT_DECODER.with_query_pos_embed
         num_queries = self.num_queries
-        if self.refine_reference_points:
-            self.detect_head = _get_clones(self.detect_head, self.num_layers)
-            # reset params
-            for head in self.detect_head[1:]:
-                head.reset_parameters_as_refine_head()
-        else:
-            self.detect_head = nn.ModuleList([self.detect_head for _ in range(self.num_layers)])
-
-
-
+        
         encoder_layer = DeformableTransformerEncoderLayer(
             hidden_dim, nhead, dim_feedforward, dropout, activation,
             num_feature_levels, num_encoder_points, lr_mult)
@@ -156,6 +143,19 @@ class Obj_Transformer(nn.Layer):
             embed_type=position_embed_type,
             offset=pe_offset,
             eps=1e-4)
+
+        #detect head
+        self.refine_reference_points = args.OBJECT_DECODER.refine_reference_points
+        self.detect_head = build_detect_predictor(args.OBJECT_DECODER.HEAD)
+        self.with_query_pos_embed = args.OBJECT_DECODER.with_query_pos_embed
+       
+        if self.refine_reference_points:
+            self.detect_head = _get_clones(self.detect_head, self.num_layers)
+            # reset params
+            for head in self.detect_head[1:]:
+                head.reset_parameters_as_refine_head()
+        else:
+            self.detect_head = nn.ModuleList([self.detect_head for _ in range(self.num_layers)])
 
         self._reset_parameters()
 
@@ -401,12 +401,10 @@ class Obj_Transformer(nn.Layer):
         if not self.training:
             sample['gt_class'] = [paddle.to_tensor([], dtype="int32").reshape([0, 1]) for _ in range(len(sample['im_id']))]
             sample['gt_bbox'] = [paddle.to_tensor([], dtype="float32").reshape([0, 4]) for _ in range(len(sample['im_id']))]
-            #sample['im_id'] = [paddle.to_tensor([], dtype="int64").reshape([0, 1])]
-            sample['is_crowd'] =  [paddle.to_tensor([], dtype="int32").reshape([0, 1]) for _ in range(len(sample['im_id']))]
-            sample['gt_area'] =  [paddle.to_tensor([], dtype="float32").reshape([0, 4]) for _ in range(len(sample['im_id']))]
-            #sample['im_shape'] =  [paddle.to_tensor([], dtype="float32").reshape([0, 2])]
-            #sample['orig_size'] = paddle.to_tensor([], dtype="float32").reshape([0, 2])
-        
+            sample['is_crowd'] = [paddle.to_tensor([], dtype="int32").reshape([0, 1]) for _ in range(len(sample['im_id']))]
+            sample['gt_area'] = [paddle.to_tensor([], dtype="float32").reshape([0, 4]) for _ in range(len(sample['im_id']))]        
+
+
         for i, _ in enumerate(sample['gt_class']):
             target = {}
             target["num_classes"] = paddle.to_tensor(num_cats)
